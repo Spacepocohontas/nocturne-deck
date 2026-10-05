@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOCTURNE DECK — visualizer + mini DJ studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%2308060a' width='32' height='32'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23e11d48' stroke-width='2'/%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #07060a;
+    --panel: #121018;
+    --line: #2a2433;
+    --ink: #f4efe8;
+    --mute: #9a9086;
+    --rose: #e11d48;
+    --violet: #a78bfa;
+    --gold: #e7c27a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: "Segoe UI", Inter, system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: 58px 1fr 92px; min-height: 100vh; }
+  header, footer, aside, main { border-color: var(--line); }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 0 16px; border-bottom: 1px solid var(--line); background: #0c0a10;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; letter-spacing: 0.18em; }
+  .brand b { font-weight: 700; font-size: 14px; }
+  .brand span { color: var(--mute); font-size: 11px; letter-spacing: 0.08em; }
+  .stage { display: grid; grid-template-columns: 300px 1fr 320px; min-height: 0; }
+  aside { background: var(--panel); overflow: auto; padding: 12px; }
+  aside.left { border-right: 1px solid var(--line); }
+  aside.right { border-left: 1px solid var(--line); }
+  main { position: relative; min-width: 0; background: #050308; }
+  canvas { width: 100%; height: 100%; display: block; }
+  h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); }
+  label { display: block; font-size: 11px; color: var(--mute); margin: 8px 0 4px; }
+  input[type="text"], textarea, select, input[type="number"] {
+    width: 100%; background: #0b0910; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  button, .filebtn {
+    background: #1b1722; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button.primary { background: var(--rose); border-color: #9f1239; font-weight: 650; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .row > * { flex: 1; }
+  .deck {
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 10px; background: #0d0b12;
+  }
+  .deck.on { outline: 1px solid #5b2140; }
+  .meta { font-size: 11px; color: var(--mute); min-height: 16px; }
+  input[type="range"] { width: 100%; accent-color: var(--rose); }
+  footer {
+    border-top: 1px solid var(--line); display: grid; grid-template-columns: 1.2fr 1fr 1.2fr;
+    gap: 12px; align-items: center; padding: 8px 14px; background: #0c0a10;
+  }
+  .transport { display: flex; gap: 8px; align-items: center; }
+  .time { font-variant-numeric: tabular-nums; color: var(--gold); font-size: 13px; min-width: 108px; }
+  .log, .projects, .takes { font-size: 12px; max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: #0b0910; }
+  .log div, .projects div, .takes div { padding: 4px 2px; border-bottom: 1px solid #1c1822; display: flex; justify-content: space-between; gap: 8px; }
+  .pill { font-size: 10px; letter-spacing: 0.12em; color: var(--violet); }
+  .overlay {
+    position: absolute; left: 16px; bottom: 16px; right: 16px; pointer-events: none;
+    text-shadow: 0 2px 18px #000; 
+  }
+  .overlay .scene { font-size: 12px; letter-spacing: 0.2em; color: var(--gold); text-transform: uppercase; }
+  .overlay .line { font-size: 22px; font-weight: 650; margin-top: 4px; }
+  .warn { font-size: 11px; color: var(--mute); line-height: 1.4; }
+  video.hidden-src { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+  @media (max-width: 980px) {
+    body { grid-template-rows: auto auto auto; }
+    .stage { grid-template-columns: 1fr; }
+    main { height: 52vh; }
+    footer { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>NOCTURNE DECK</b><span>visualizer · mini DJ · local projects</span></div>
+  <div class="pill" id="status">IDLE</div>
+  <div class="row" style="margin:0; flex:0">
+    <button id="recBtn" class="primary">Record live viz</button>
+    <button id="stopRec" disabled>Stop & download</button>
+  </div>
+</header>
+<div class="stage">
+  <aside class="left">
+    <h2>Decks</h2>
+    <div class="deck on" id="deckAbox">
+      <div class="pill">DECK A · picture / clip</div>
+      <label>Video or image (mp4, mov, webm, png, jpg)</label>
+      <input id="fileA" type="file" accept="video/*,image/*,.mov,.mp4,.webm,.mkv" />
+      <div class="meta" id="metaA">empty</div>
+      <label><input id="muteA" type="checkbox" checked /> Mute original audio</label>
+      <label>Deck gain <input id="gainA" type="range" min="0" max="1" step="0.01" value="1" /></label>
+    </div>
+    <div class="deck" id="deckBbox">
+      <div class="pill">DECK B · your track</div>
+      <label>Audio or video soundtrack (mp3, wav, m4a, mp4)</label>
+      <input id="fileB" type="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.mp4" />
+      <div class="meta" id="metaB">empty</div>
+      <label><input id="muteB" type="checkbox" /> Mute deck B original</label>
+      <label>Deck gain <input id="gainB" type="range" min="0" max="1" step="0.01" value="1" /></label>
+    </div>
+    <h2>Mix</h2>
+    <label>Crossfader · A to B <input id="xfade" type="range" min="0" max="1" step="0.01" value="0.35" /></label>
+    <label>Low <input id="eqLow" type="range" min="-24" max="12" step="1" value="2" /></label>
+    <label>Mid <input id="eqMid" type="range" min="-24" max="12" step="1" value="0" /></label>
+    <label>High <input id="eqHigh" type="range" min="-24" max="12" step="1" value="3" /></label>
+    <label>Pitch / rate <input id="rate" type="range" min="0.5" max="1.5" step="0.01" value="1" /></label>
+    <div class="row">
+      <button id="loopBtn">Set loop in</button>
+      <button id="clearLoop">Clear loop</button>
+    </div>
+    <p class="warn">Files never leave this browser. Mute the clip, drop your own track on deck B, crossfade. Recording grabs the canvas plus the mixed audio.</p>
+  </aside>
+  <main>
+    <canvas id="viz"></canvas>
+    <video id="vidA" class="hidden-src" playsinline></video>
+    <video id="vidB" class="hidden-src" playsinline></video>
+    <audio id="audA"></audio>
+    <audio id="audB"></audio>
+    <div class="overlay">
+      <div class="scene" id="sceneLabel">DEFAULT DIRECTOR</div>
+      <div class="line" id="lyricLine"></div>
+    </div>
+  </main>
+  <aside class="right">
+    <h2>Director</h2>
+    <label>Mode</label>
+    <select id="mode">
+      <option value="auto">Auto — follow beats & prompt</option>
+      <option value="bars">Pulse bars</option>
+      <option value="radial">Radial bloom</option>
+      <option value="tunnel">Tunnel</option>
+      <option value="particles">Particle storm</option>
+      <option value="silk">Wave silk</option>
+      <option value="film">Prompt film</option>
+    </select>
+    <label>Prompt, lyrics, or message</label>
+    <textarea id="prompt" placeholder="crimson alley, neon rain, a girl who doesn't look back — or paste lyrics, one line per row"></textarea>
+    <label>Takes to generate <input id="takeCount" type="number" min="1" max="6" value="3" /></label>
+    <div class="row">
+      <button id="armTakes" class="primary">Arm take variations</button>
+      <button id="captureTake">Capture this take</button>
+    </div>
+    <div class="takes" id="takes"></div>
+    <h2 style="margin-top:14px">Projects · this browser</h2>
+    <label>Project name <input id="projName" type="text" value="Untitled night" /></label>
+    <div class="row">
+      <button id="saveProj">Save project</button>
+      <button id="newProj">New</button>
+    </div>
+    <div class="projects" id="projects"></div>
+    <h2 style="margin-top:14px">Activity log</h2>
+    <div class="log" id="log"></div>
+    <div class="row">
+      <button id="exportLog">Export log JSON</button>
+      <button id="wipe">Wipe local data</button>
+    </div>
+  </aside>
+</div>
+<footer>
+  <div class="transport">
+    <button id="play" class="primary">Play</button>
+    <button id="pause">Pause</button>
+    <button id="stop">Stop</button>
+    <button id="demo">Demo pulse</button>
+    <span class="time" id="time">0:00 / 0:00</span>
+  </div>
+  <label style="margin:0">Seek <input id="seek" type="range" min="0" max="1" step="0.001" value="0" /></label>
+  <div>
+    <label style="margin:0">Master <input id="master" type="range" min="0" max="1" step="0.01" value="0.9" /></label>
+    <div class="meta" id="recMeta">Not recording. Live viz downloads as WebM.</div>
+  </div>
+</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const canvas = $("viz");
+const ctx = canvas.getContext("2d", { alpha: false });
+const statusEl = $("status");
+const DB_NAME = "nocturne-deck";
+const DB_VER = 1;
+
+const state = {
+  mode: "auto",
+  prompt: "",
+  lines: [],
+  lineIndex: 0,
+  scene: "DEFAULT DIRECTOR",
+  seed: 1,
+  energy: 0,
+  beat: 0,
+  lastBeat: 0,
+  hue: 345,
+  recording: false,
+  recorder: null,
+  chunks: [],
+  demo: false,
+  demoNodes: [],
+  loop: null,
+  loopArmed: false,
+  projectId: null,
+  takes: [],
+  activeTake: 0,
+  raf: 0,
+  particles: [],
+  t: 0
+};
+
+let ac, master, analyser, freq, timeData, recDest;
+let low, mid, high;
+const decks = {
+  A: { el: null, kind: null, gain: null, srcNode: null, fileName: "" },
+  B: { el: null, kind: null, gain: null, srcNode: null, fileName: "" }
+};
+
+function log(msg) {
+  const row = document.createElement("div");
+  const ts = new Date().toLocaleTimeString();
+  row.innerHTML = `<span>${msg}</span><span>${ts}</span>`;
+  $("log").prepend(row);
+  idbPut("activity", { id: crypto.randomUUID(), at: Date.now(), msg, projectId: state.projectId });
+}
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("projects")) db.createObjectStore("projects", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("activity")) db.createObjectStore("activity", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("renders")) db.createObjectStore("renders", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbPut(store, value) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(value);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbAll(store) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readonly");
+    const req = tx.objectStore(store).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbDel(store, id) {
+  const db = await openDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).delete(id);
+    tx.oncomplete = () => resolve();
+  });
+}
+async function idbClear(store) {
+  const db = await openDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).clear();
+    tx.oncomplete = () => resolve();
+  });
+}
+
+function ensureAudio() {
+  if (ac) return;
+  ac = new AudioContext();
+  master = ac.createGain();
+  master.gain.value = Number($("master").value);
+  low = ac.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 180;
+  mid = ac.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1000; mid.Q.value = 0.8;
+  high = ac.createBiquadFilter(); high.type = "highshelf"; high.frequency.value = 4200;
+  analyser = ac.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.78;
+  freq = new Uint8Array(analyser.frequencyBinCount);
+  timeData = new Uint8Array(analyser.fftSize);
+  recDest = ac.createMediaStreamDestination();
+  low.connect(mid); mid.connect(high); high.connect(analyser);
+  analyser.connect(master);
+  master.connect(ac.destination);
+  master.connect(recDest);
+  applyEq();
+}
+
+function applyEq() {
+  if (!low) return;
+  low.gain.value = Number($("eqLow").value);
+  mid.gain.value = Number($("eqMid").value);
+  high.gain.value = Number($("eqHigh").value);
+  master.gain.value = Number($("master").value);
+}
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return Math.abs(h);
+}
+function parsePrompt() {
+  const raw = $("prompt").value.trim();
+  state.prompt = raw;
+  state.lines = raw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  if (!state.lines.length && raw) state.lines = raw.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+  const h = hashStr(raw || "nocturne") + state.seed * 97;
+  state.hue = h % 360;
+  const words = (raw || "night pulse alley neon").split(/[^a-zA-Z0-9]+/).filter(w => w.length > 2);
+  state.scene = (words[state.activeTake % Math.max(1, words.length)] || "NIGHT").toUpperCase();
+  $("sceneLabel").textContent = state.mode === "auto" ? "AUTO · " + state.scene : state.scene;
+}
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.max(2, Math.floor(r.width * dpr));
+  canvas.height = Math.max(2, Math.floor(r.height * dpr));
+}
+window.addEventListener("resize", resize);
+resize();
+
+function bindDeck(letter, file) {
+  ensureAudio();
+  const isVid = file.type.startsWith("video") || /\.(mp4|mov|webm|mkv)$/i.test(file.name);
+  const isImg = file.type.startsWith("image");
+  const el = isVid ? $(letter === "A" ? "vidA" : "vidB") : (isImg ? null : $(letter === "A" ? "audA" : "audB"));
+  if (decks[letter].srcNode) {
+    try { decks[letter].srcNode.disconnect(); } catch (e) {}
+  }
+  const url = URL.createObjectURL(file);
+  if (isImg) {
+    const img = new Image();
+    img.src = url;
+    decks[letter] = { el: img, kind: "image", gain: decks[letter].gain, srcNode: null, fileName: file.name, url };
+    $(`meta${letter}`).textContent = file.name + " · still";
+    log(`Loaded still on deck ${letter}: ${file.name}`);
+    return;
+  }
+  el.src = url;
+  el.loop = false;
+  const mute = $(`mute${letter}`).checked;
+  el.muted = mute;
+  const node = ac.createMediaElementSource(el);
+  const gain = ac.createGain();
+  node.connect(gain);
+  gain.connect(low);
+  decks[letter] = { el, kind: isVid ? "video" : "audio", gain, srcNode: node, fileName: file.name, url };
+  $(`meta${letter}`).textContent = `${file.name} · ${isVid ? "video" : "audio"}`;
+  log(`Loaded ${file.name} on deck ${letter}${mute ? " (original muted)" : ""}`);
+  applyMix();
+}
+
+function applyMix() {
+  const x = Number($("xfade").value);
+  const gA = Number($("gainA").value) * (1 - x);
+  const gB = Number($("gainB").value) * x;
+  if (decks.A.gain) decks.A.gain.gain.value = $("muteA").checked && decks.A.kind === "video" ? 0 : gA;
+  if (decks.B.gain) decks.B.gain.gain.value = $("muteB").checked ? 0 : gB;
+  if (decks.A.el && decks.A.el.muted !== undefined) decks.A.el.muted = $("muteA").checked;
+  if (decks.B.el && decks.B.el.muted !== undefined) decks.B.el.muted = $("muteB").checked;
+  const rate = Number($("rate").value);
+  ["A", "B"].forEach(L => {
+    const el = decks[L].el;
+    if (el && el.playbackRate !== undefined && decks[L].kind !== "image") el.playbackRate = rate;
+  });
+}
+
+function primaryEl() {
+  if (decks.B.kind === "audio" || decks.B.kind === "video") return decks.B.el;
+  if (decks.A.kind === "video" || decks.A.kind === "audio") return decks.A.el;
+  return decks.B.el || decks.A.el;
+}
+
+function fmt(t) {
+  if (!isFinite(t)) return "0:00";
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+async function playAll() {
+  ensureAudio();
+  if (ac.state === "suspended") await ac.resume();
+  stopDemo();
+  const jobs = [];
+  ["A", "B"].forEach(L => {
+    const el = decks[L].el;
+    if (el && el.play) jobs.push(el.play().catch(() => {}));
+  });
+  await Promise.all(jobs);
+  statusEl.textContent = "LIVE";
+  log("Playback started");
+}
+function pauseAll() {
+  ["A", "B"].forEach(L => decks[L].el && decks[L].el.pause && decks[L].el.pause());
+  statusEl.textContent = "PAUSED";
+}
+function stopAll() {
+  ["A", "B"].forEach(L => {
+    const el = decks[L].el;
+    if (el && el.pause) { el.pause(); try { el.currentTime = 0; } catch (e) {} }
+  });
+  stopDemo();
+  statusEl.textContent = "IDLE";
+}
+
+function startDemo() {
+  ensureAudio();
+  stopDemo();
+  state.demo = true;
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  o.type = "sawtooth";
+  o.frequency.value = 55;
+  g.gain.value = 0.0001;
+  o.connect(g); g.connect(low);
+  o.start();
+  state.demoNodes = [o, g];
+  const kick = () => {
+    if (!state.demo) return;
+    const now = ac.currentTime;
+    g.gain.cancelScheduledValues(now);
+    g.gain.setValueAtTime(0.35, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    o.frequency.setValueAtTime(70 + Math.random() * 40, now);
+    setTimeout(kick, 480 + Math.random() * 80);
+  };
+  kick();
+  statusEl.textContent = "DEMO";
+  log("Demo pulse armed — no file needed");
+}
+function stopDemo() {
+  state.demo = false;
+  state.demoNodes.forEach(n => { try { n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
+  state.demoNodes = [];
+}
+
+function energyOf() {
+  if (!analyser) return 0;
+  analyser.getByteFrequencyData(freq);
+  analyser.getByteTimeDomainData(timeData);
+  let s = 0;
+  const n = Math.min(80, freq.length);
+  for (let i = 2; i < n; i++) s += freq[i];
+  const e = s / (n * 255);
+  if (e > state.energy * 1.35 && e > 0.18 && performance.now() - state.lastBeat > 180) {
+    state.beat++;
+    state.lastBeat = performance.now();
+    if (state.lines.length && state.beat % 4 === 0) {
+      state.lineIndex = (state.lineIndex + 1) % state.lines.length;
+    }
+    if (state.mode === "auto" && state.beat % 8 === 0) {
+      const words = (state.prompt || "pulse night rain chrome").split(/\s+/);
+      state.scene = (words[state.beat % words.length] || "PULSE").toUpperCase();
+      $("sceneLabel").textContent = "AUTO · " + state.scene;
+    }
+  }
+  state.energy = state.energy * 0.85 + e * 0.15;
+  return e;
+}
+
+function drawVideoLayer() {
+  const vid = decks.A.kind === "video" ? decks.A.el : (decks.B.kind === "video" ? decks.B.el : null);
+  const img = decks.A.kind === "image" ? decks.A.el : (decks.B.kind === "image" ? decks.B.el : null);
+  const src = (vid && vid.readyState >= 2) ? vid : (img && img.complete ? img : null);
+  if (!src) return;
+  const w = canvas.width, h = canvas.height;
+  const vw = src.videoWidth || src.naturalWidth || w;
+  const vh = src.videoHeight || src.naturalHeight || h;
+  const scale = Math.max(w / vw, h / vh);
+  const dw = vw * scale, dh = vh * scale;
+  ctx.globalAlpha = 0.72;
+  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  ctx.globalAlpha = 1;
+}
+
+function palette() {
+  const h = state.hue;
+  return [`hsl(${h} 82% 58%)`, `hsl(${(h + 40) % 360} 70% 62%)`, `hsl(${(h + 200) % 360} 40% 18%)`];
+}
+
+function drawBars(e) {
+  const w = canvas.width, h = canvas.height;
+  const bars = 72;
+  const gap = 4;
+  const bw = w / bars;
+  for (let i = 0; i < bars; i++) {
+    const v = freq ? freq[i % freq.length] / 255 : e;
+    const bh = Math.max(4, v * h * 0.8);
+    ctx.fillStyle = palette()[i % 2];
+    ctx.fillRect(i * bw + gap / 2, h - bh, bw - gap, bh);
+  }
+}
+function drawRadial(e) {
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2;
+  const bins = 96;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(state.t * 0.15);
+  for (let i = 0; i < bins; i++) {
+    const v = freq ? freq[(i * 3) % freq.length] / 255 : e;
+    const a = (i / bins) * Math.PI * 2;
+    ctx.strokeStyle = palette()[0];
+    ctx.lineWidth = 2 + e * 6;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * 40, Math.sin(a) * 40);
+    ctx.lineTo(Math.cos(a) * (70 + v * Math.min(w, h) * 0.42), Math.sin(a) * (70 + v * Math.min(w, h) * 0.42));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawTunnel(e) {
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2;
+  for (let i = 12; i > 0; i--) {
+    const p = ((state.t * (0.4 + e) + i / 12) % 1);
+    const s = 40 + p * Math.min(w, h);
+    ctx.strokeStyle = palette()[i % 2];
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeRect(cx - s, cy - s * 0.62, s * 2, s * 1.24);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawParticles(e) {
+  const w = canvas.width, h = canvas.height;
+  if (state.particles.length < 140) {
+    state.particles.push({ x: Math.random() * w, y: Math.random() * h, v: 0.4 + Math.random() * 2, r: 1 + Math.random() * 3 });
+  }
+  ctx.fillStyle = palette()[1];
+  state.particles.forEach(p => {
+    p.y -= p.v * (1 + e * 6);
+    p.x += Math.sin(state.t + p.y * 0.01) * e * 8;
+    if (p.y < 0) { p.y = h; p.x = Math.random() * w; }
+    ctx.globalAlpha = 0.35 + e;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * (1 + e * 2), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+function drawSilk(e) {
+  const w = canvas.width, h = canvas.height;
+  ctx.beginPath();
+  for (let x = 0; x <= w; x += 6) {
+    const i = Math.floor((x / w) * (timeData ? timeData.length : 2));
+    const v = timeData ? (timeData[i] - 128) / 128 : Math.sin(x * 0.02 + state.t);
+    const y = h * 0.55 + v * h * 0.28 * (0.4 + e);
+    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = palette()[0];
+  ctx.lineWidth = 2 + e * 5;
+  ctx.stroke();
+}
+function drawFilm(e) {
+  const w = canvas.width, h = canvas.height;
+  const words = (state.prompt || "hold still").split(/\s+/).slice(0, 8);
+  ctx.fillStyle = palette()[0];
+  ctx.font = `${Math.floor(h * 0.08)}px Georgia, serif`;
+  words.forEach((word, i) => {
+    const y = h * 0.2 + i * h * 0.08;
+    const x = w * 0.12 + Math.sin(state.t + i) * e * 40;
+    ctx.globalAlpha = 0.25 + (i === state.lineIndex % words.length ? 0.75 : 0.2);
+    ctx.fillText(word, x, y);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function frame() {
+  state.raf = requestAnimationFrame(frame);
+  state.t += 0.016;
+  const w = canvas.width, h = canvas.height;
+  const e = energyOf();
+  const [c1, c2, c3] = palette();
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, c3);
+  g.addColorStop(1, "#050308");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  drawVideoLayer();
+  ctx.fillStyle = `rgba(5,3,8,${0.25 + (1 - e) * 0.25})`;
+  ctx.fillRect(0, 0, w, h);
+  const mode = $("mode").value;
+  state.mode = mode;
+  const pick = mode === "auto"
+    ? ["bars", "radial", "tunnel", "particles", "silk", "film"][Math.floor(state.beat / 8) % 6]
+    : mode;
+  if (pick === "bars") drawBars(e);
+  else if (pick === "radial") drawRadial(e);
+  else if (pick === "tunnel") drawTunnel(e);
+  else if (pick === "particles") drawParticles(e);
+  else if (pick === "silk") drawSilk(e);
+  else drawFilm(e);
+  const line = state.lines[state.lineIndex] || "";
+  $("lyricLine").textContent = line;
+  const el = primaryEl();
+  if (el && isFinite(el.duration)) {
+    $("time").textContent = `${fmt(el.currentTime)} / ${fmt(el.duration)}`;
+    if (!$("seek").matches(":active")) $("seek").value = el.currentTime / el.duration;
+    if (state.loop && el.currentTime > state.loop[1]) el.currentTime = state.loop[0];
+  } else if (state.demo) {
+    $("time").textContent = "demo";
+  }
+}
+frame();
+
+function mime() {
+  const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+}
+function startRec() {
+  ensureAudio();
+  const stream = canvas.captureStream(30);
+  recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+  state.chunks = [];
+  const rec = new MediaRecorder(stream, mime() ? { mimeType: mime() } : undefined);
+  rec.ondataavailable = (ev) => { if (ev.data.size) state.chunks.push(ev.data); };
+  rec.onstop = async () => {
+    const blob = new Blob(state.chunks, { type: rec.mimeType || "video/webm" });
+    const name = `${($("projName").value || "nocturne").replace(/\s+/g, "-")}-take-${state.activeTake + 1}.webm`;
+    downloadBlob(blob, name);
+    const id = crypto.randomUUID();
+    await idbPut("renders", { id, name, at: Date.now(), size: blob.size, projectId: state.projectId, blob });
+    $("recMeta").textContent = `Saved ${name} (${Math.round(blob.size / 1024)} KB)`;
+    log(`Recorded ${name}`);
+    renderTakes();
+  };
+  rec.start(200);
+  state.recorder = rec;
+  state.recording = true;
+  $("recBtn").disabled = true;
+  $("stopRec").disabled = false;
+  statusEl.textContent = "REC";
+  log("Live capture started");
+}
+function stopRec() {
+  if (state.recorder && state.recording) state.recorder.stop();
+  state.recording = false;
+  $("recBtn").disabled = false;
+  $("stopRec").disabled = true;
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function armTakes() {
+  parsePrompt();
+  const n = Math.max(1, Math.min(6, Number($("takeCount").value) || 3));
+  const modes = ["bars", "radial", "tunnel", "particles", "silk", "film"];
+  state.takes = Array.from({ length: n }, (_, i) => ({
+    id: crypto.randomUUID(),
+    seed: hashStr(state.prompt || "night") + i * 131,
+    mode: modes[i % modes.length],
+    label: `Take ${i + 1} · ${modes[i % modes.length]}`
+  }));
+  state.activeTake = 0;
+  applyTake(0);
+  log(`Armed ${n} visual takes from prompt`);
+  renderTakes();
+}
+function applyTake(i) {
+  const take = state.takes[i];
+  if (!take) return;
+  state.activeTake = i;
+  state.seed = take.seed;
+  if ($("mode").value !== "auto") $("mode").value = take.mode;
+  parsePrompt();
+  state.scene = take.label.toUpperCase();
+  $("sceneLabel").textContent = take.label.toUpperCase();
+  renderTakes();
+}
+async function renderTakes() {
+  const box = $("takes");
+  box.innerHTML = "";
+  state.takes.forEach((t, i) => {
+    const d = document.createElement("div");
+    d.innerHTML = `<span>${i === state.activeTake ? "▸ " : ""}${t.label}</span><span>seed ${t.seed % 9999}</span>`;
+    d.onclick = () => applyTake(i);
+    box.appendChild(d);
+  });
+  const renders = (await idbAll("renders")).sort((a, b) => b.at - a.at).slice(0, 8);
+  renders.forEach(r => {
+    const d = document.createElement("div");
+    d.innerHTML = `<span>${r.name}</span><span>download</span>`;
+    d.onclick = () => r.blob && downloadBlob(r.blob, r.name);
+    box.appendChild(d);
+  });
+}
+
+function snapshotSettings() {
+  return {
+    prompt: $("prompt").value,
+    mode: $("mode").value,
+    xfade: $("xfade").value,
+    eqLow: $("eqLow").value,
+    eqMid: $("eqMid").value,
+    eqHigh: $("eqHigh").value,
+    rate: $("rate").value,
+    master: $("master").value,
+    muteA: $("muteA").checked,
+    muteB: $("muteB").checked,
+    projName: $("projName").value,
+    takes: state.takes,
+    fileA: decks.A.fileName,
+    fileB: decks.B.fileName
+  };
+}
+async function saveProject() {
+  const id = state.projectId || crypto.randomUUID();
+  state.projectId = id;
+  const project = { id, name: $("projName").value || "Untitled", at: Date.now(), settings: snapshotSettings() };
+  await idbPut("projects", project);
+  log(`Project saved: ${project.name}`);
+  await refreshProjects();
+}
+async function refreshProjects() {
+  const list = (await idbAll("projects")).sort((a, b) => b.at - a.at);
+  const box = $("projects");
+  box.innerHTML = "";
+  list.forEach(p => {
+    const d = document.createElement("div");
+    d.innerHTML = `<span>${p.name}</span><span>${new Date(p.at).toLocaleDateString()}</span>`;
+    d.onclick = () => loadProject(p);
+    box.appendChild(d);
+  });
+}
+function loadProject(p) {
+  state.projectId = p.id;
+  const s = p.settings || {};
+  $("projName").value = p.name;
+  $("prompt").value = s.prompt || "";
+  $("mode").value = s.mode || "auto";
+  ["xfade", "eqLow", "eqMid", "eqHigh", "rate", "master"].forEach(k => { if (s[k] != null) $(k).value = s[k]; });
+  $("muteA").checked = !!s.muteA;
+  $("muteB").checked = !!s.muteB;
+  state.takes = s.takes || [];
+  parsePrompt();
+  applyEq();
+  applyMix();
+  renderTakes();
+  log(`Opened project ${p.name}. Reload media files if this is a new session — names were ${s.fileA || "—"} / ${s.fileB || "—"}.`);
+}
+
+$("fileA").onchange = (e) => e.target.files[0] && bindDeck("A", e.target.files[0]);
+$("fileB").onchange = (e) => e.target.files[0] && bindDeck("B", e.target.files[0]);
+["muteA", "muteB", "gainA", "gainB", "xfade", "rate"].forEach(id => $(id).oninput = applyMix);
+["eqLow", "eqMid", "eqHigh", "master"].forEach(id => $(id).oninput = applyEq);
+$("prompt").oninput = parsePrompt;
+$("mode").onchange = parsePrompt;
+$("play").onclick = playAll;
+$("pause").onclick = pauseAll;
+$("stop").onclick = stopAll;
+$("demo").onclick = startDemo;
+$("recBtn").onclick = startRec;
+$("stopRec").onclick = stopRec;
+$("armTakes").onclick = armTakes;
+$("captureTake").onclick = async () => {
+  if (!state.recording) startRec();
+  await playAll();
+  log(`Capturing ${state.takes[state.activeTake]?.label || "current look"}`);
+};
+$("saveProj").onclick = saveProject;
+$("newProj").onclick = () => { state.projectId = null; $("projName").value = "Untitled night"; log("New project"); };
+$("loopBtn").onclick = () => {
+  const el = primaryEl();
+  if (!el) return;
+  if (!state.loopArmed) {
+    state.loop = [el.currentTime, el.currentTime + 8];
+    state.loopArmed = true;
+    $("loopBtn").textContent = "Set loop out";
+  } else {
+    state.loop[1] = Math.max(state.loop[0] + 0.25, el.currentTime);
+    state.loopArmed = false;
+    $("loopBtn").textContent = "Set loop in";
+    log(`Loop ${fmt(state.loop[0])}–${fmt(state.loop[1])}`);
+  }
+};
+$("clearLoop").onclick = () => { state.loop = null; state.loopArmed = false; $("loopBtn").textContent = "Set loop in"; };
+$("seek").oninput = () => {
+  const el = primaryEl();
+  if (el && isFinite(el.duration)) el.currentTime = Number($("seek").value) * el.duration;
+};
+$("exportLog").onclick = async () => {
+  const data = { activity: await idbAll("activity"), projects: (await idbAll("projects")).map(p => ({ ...p })) };
+  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), "nocturne-activity.json");
+};
+$("wipe").onclick = async () => {
+  if (!confirm("Wipe projects, log, and saved renders in this browser?")) return;
+  await idbClear("projects"); await idbClear("activity"); await idbClear("renders");
+  $("log").innerHTML = ""; $("projects").innerHTML = ""; $("takes").innerHTML = "";
+  log("Local data wiped");
+};
+
+parsePrompt();
+refreshProjects();
+idbAll("activity").then(rows => {
+  rows.sort((a, b) => b.at - a.at).slice(0, 30).forEach(r => {
+    const d = document.createElement("div");
+    d.innerHTML = `<span>${r.msg}</span><span>${new Date(r.at).toLocaleTimeString()}</span>`;
+    $("log").appendChild(d);
+  });
+});
+</script>
+</body>
+</html>
