@@ -215,6 +215,7 @@ const state = {
 };
 
 let ac, master, analyser, freq, timeData, recDest;
+const mediaSources = new WeakMap();
 let low, mid, high;
 const decks = {
   A: { el: null, kind: null, gain: null, srcNode: null, fileName: "" },
@@ -337,6 +338,10 @@ function bindDeck(letter, file) {
   const isVid = file.type.startsWith("video") || /\.(mp4|mov|webm|mkv)$/i.test(file.name);
   const isImg = file.type.startsWith("image");
   const el = isVid ? $(letter === "A" ? "vidA" : "vidB") : (isImg ? null : $(letter === "A" ? "audA" : "audB"));
+  const previous = decks[letter];
+  if (previous.el && previous.el.pause) previous.el.pause();
+  if (previous.url) URL.revokeObjectURL(previous.url);
+  if (previous.gain) previous.gain.disconnect();
   if (decks[letter].srcNode) {
     try { decks[letter].srcNode.disconnect(); } catch (e) {}
   }
@@ -353,7 +358,11 @@ function bindDeck(letter, file) {
   el.loop = false;
   const mute = $(`mute${letter}`).checked;
   el.muted = mute;
-  const node = ac.createMediaElementSource(el);
+  let node = mediaSources.get(el);
+  if (!node) {
+    node = ac.createMediaElementSource(el);
+    mediaSources.set(el, node);
+  }
   const gain = ac.createGain();
   node.connect(gain);
   gain.connect(low);
@@ -367,7 +376,7 @@ function applyMix() {
   const x = Number($("xfade").value);
   const gA = Number($("gainA").value) * (1 - x);
   const gB = Number($("gainB").value) * x;
-  if (decks.A.gain) decks.A.gain.gain.value = $("muteA").checked && decks.A.kind === "video" ? 0 : gA;
+  if (decks.A.gain) decks.A.gain.gain.value = $("muteA").checked ? 0 : gA;
   if (decks.B.gain) decks.B.gain.gain.value = $("muteB").checked ? 0 : gB;
   if (decks.A.el && decks.A.el.muted !== undefined) decks.A.el.muted = $("muteA").checked;
   if (decks.B.el && decks.B.el.muted !== undefined) decks.B.el.muted = $("muteB").checked;
@@ -417,8 +426,9 @@ function stopAll() {
   statusEl.textContent = "IDLE";
 }
 
-function startDemo() {
+async function startDemo() {
   ensureAudio();
+  if (ac.state === "suspended") await ac.resume();
   stopDemo();
   state.demo = true;
   const o = ac.createOscillator();
@@ -820,3 +830,4 @@ idbAll("activity").then(rows => {
 </script>
 </body>
 </html>
+
