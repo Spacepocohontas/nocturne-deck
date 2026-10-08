@@ -201,7 +201,6 @@ const state = {
   hue: 345,
   recording: false,
   recorder: null,
-  chunks: [],
   demo: false,
   demoNodes: [],
   loop: null,
@@ -631,36 +630,76 @@ function mime() {
   const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
   return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
 }
-function startRec() {
-  ensureAudio();
-  const stream = canvas.captureStream(30);
-  recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-  state.chunks = [];
-  const rec = new MediaRecorder(stream, mime() ? { mimeType: mime() } : undefined);
-  rec.ondataavailable = (ev) => { if (ev.data.size) state.chunks.push(ev.data); };
-  rec.onstop = async () => {
-    const blob = new Blob(state.chunks, { type: rec.mimeType || "video/webm" });
-    const name = `${($("projName").value || "nocturne").replace(/\s+/g, "-")}-take-${state.activeTake + 1}.webm`;
-    downloadBlob(blob, name);
-    const id = crypto.randomUUID();
-    await idbPut("renders", { id, name, at: Date.now(), size: blob.size, projectId: state.projectId, blob });
-    $("recMeta").textContent = `Saved ${name} (${Math.round(blob.size / 1024)} KB)`;
-    log(`Recorded ${name}`);
-    renderTakes();
-  };
-  rec.start(200);
-  state.recorder = rec;
+async function startRec() {
+  // Keep the session locked until its final chunks and local save finish.
+  if (state.recording || state.recorder) return false;
   state.recording = true;
   $("recBtn").disabled = true;
-  $("stopRec").disabled = false;
-  statusEl.textContent = "REC";
-  log("Live capture started");
+  $("captureTake").disabled = true;
+  let stream;
+  const release = () => {
+    // The mixer audio track is shared by future recordings.
+    stream?.getVideoTracks().forEach(t => t.stop());
+    state.recorder = null;
+    state.recording = false;
+    $("recBtn").disabled = false;
+    $("captureTake").disabled = false;
+    $("stopRec").disabled = true;
+    statusEl.textContent = state.demo ? "DEMO" : "IDLE";
+  };
+  const name = `${($("projName").value || "nocturne").replace(/\s+/g, "-")}-take-${state.activeTake + 1}.webm`;
+  const projectId = state.projectId;
+  try {
+    if (typeof MediaRecorder === "undefined" || !canvas.captureStream) {
+      throw new Error("Live recording is unavailable in this browser.");
+    }
+    ensureAudio();
+    if (ac.state === "suspended") await ac.resume();
+    stream = canvas.captureStream(30);
+    recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+    const chunks = [];
+    const type = mime();
+    const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    let failed = false;
+    state.recorder = rec;
+    rec.ondataavailable = ev => { if (ev.data.size) chunks.push(ev.data); };
+    rec.onerror = () => { failed = true; };
+    rec.onstop = async () => {
+      try {
+        if (failed || !chunks.length) throw new Error("No recording was captured. Please try again.");
+        const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
+        downloadBlob(blob, name);
+        try {
+          await idbPut("renders", { id: crypto.randomUUID(), name, at: Date.now(), size: blob.size, projectId, blob });
+          $("recMeta").textContent = `Saved ${name} (${Math.round(blob.size / 1024)} KB)`;
+          await renderTakes();
+        } catch (error) {
+          $("recMeta").textContent = `Downloaded ${name}. Could not save a local copy; check browser storage.`;
+        }
+        log(`Recorded ${name}`);
+      } catch (error) {
+        $("recMeta").textContent = error.message;
+      } finally { release(); }
+    };
+    rec.start(200);
+    $("stopRec").disabled = false;
+    $("recMeta").textContent = "Recording. Stop to download and save this take.";
+    statusEl.textContent = "REC";
+    log("Live capture started");
+    return true;
+  } catch (error) {
+    release();
+    $("recMeta").textContent = `Could not start recording: ${error.message}`;
+    return false;
+  }
 }
 function stopRec() {
-  if (state.recorder && state.recording) state.recorder.stop();
+  if (!state.recorder || !state.recording) return;
   state.recording = false;
-  $("recBtn").disabled = false;
   $("stopRec").disabled = true;
+  $("recMeta").textContent = "Finishing recording…";
+  statusEl.textContent = "SAVING";
+  state.recorder.stop();
 }
 function downloadBlob(blob, name) {
   const a = document.createElement("a");
@@ -724,6 +763,10 @@ function snapshotSettings() {
     eqHigh: $("eqHigh").value,
     rate: $("rate").value,
     master: $("master").value,
+    gainA: $("gainA").value,
+    gainB: $("gainB").value,
+    activeTake: state.activeTake,
+    seed: state.seed,
     muteA: $("muteA").checked,
     muteB: $("muteB").checked,
     projName: $("projName").value,
@@ -757,10 +800,12 @@ function loadProject(p) {
   $("projName").value = p.name;
   $("prompt").value = s.prompt || "";
   $("mode").value = s.mode || "auto";
-  ["xfade", "eqLow", "eqMid", "eqHigh", "rate", "master"].forEach(k => { if (s[k] != null) $(k).value = s[k]; });
+  ["xfade", "eqLow", "eqMid", "eqHigh", "rate", "master", "gainA", "gainB"].forEach(k => { if (s[k] != null) $(k).value = s[k]; });
   $("muteA").checked = !!s.muteA;
   $("muteB").checked = !!s.muteB;
   state.takes = s.takes || [];
+  state.activeTake = Math.max(0, Math.min(state.takes.length - 1, Number(s.activeTake) || 0));
+  state.seed = s.seed ?? state.takes[state.activeTake]?.seed ?? 1;
   parsePrompt();
   applyEq();
   applyMix();
@@ -782,7 +827,7 @@ $("recBtn").onclick = startRec;
 $("stopRec").onclick = stopRec;
 $("armTakes").onclick = armTakes;
 $("captureTake").onclick = async () => {
-  if (!state.recording) startRec();
+  if (!state.recording && !(await startRec())) return;
   await playAll();
   log(`Capturing ${state.takes[state.activeTake]?.label || "current look"}`);
 };
@@ -830,4 +875,5 @@ idbAll("activity").then(rows => {
 </script>
 </body>
 </html>
+
 
