@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>NOCTURNE DECK — visualizer + mini DJ studio</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%2308060a' width='32' height='32'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23e11d48' stroke-width='2'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%2308060a' width='32' height='32'/%3E%3Ccircle cx='16' cy='16' r='8' fill='no[...]">
 <style>
   :root {
     --bg: #07060a;
@@ -181,9 +181,18 @@
   </div>
 </footer>
 <script>
+// Lightweight polyfills and feature detection to avoid runtime errors in older/limited browsers.
+if (!window.crypto) window.crypto = {};
+if (!crypto.randomUUID) crypto.randomUUID = function() { return 'id-' + Math.floor(Math.random()*1e9) + '-' + Date.now(); };
+
 const $ = (id) => document.getElementById(id);
 const canvas = $("viz");
-const ctx = canvas.getContext("2d", { alpha: false });
+let ctx = null;
+try {
+  if (canvas) ctx = canvas.getContext("2d", { alpha: false });
+} catch (e) {
+  ctx = null;
+}
 const statusEl = $("status");
 const DB_NAME = "nocturne-deck";
 const DB_VER = 1;
@@ -226,7 +235,7 @@ function log(msg) {
   const ts = new Date().toLocaleTimeString();
   row.innerHTML = `<span>${msg}</span><span>${ts}</span>`;
   $("log").prepend(row);
-  idbPut("activity", { id: crypto.randomUUID(), at: Date.now(), msg, projectId: state.projectId });
+  idbPut("activity", { id: crypto.randomUUID(), at: Date.now(), msg, projectId: state.projectId }).catch(()=>{});
 }
 
 function openDb() {
@@ -279,27 +288,41 @@ async function idbClear(store) {
 
 function ensureAudio() {
   if (ac) return;
-  ac = new AudioContext();
-  master = ac.createGain();
-  master.gain.value = Number($("master").value);
-  low = ac.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 180;
-  mid = ac.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1000; mid.Q.value = 0.8;
-  high = ac.createBiquadFilter(); high.type = "highshelf"; high.frequency.value = 4200;
-  analyser = ac.createAnalyser();
-  analyser.fftSize = 2048;
-  analyser.smoothingTimeConstant = 0.78;
-  freq = new Uint8Array(analyser.frequencyBinCount);
-  timeData = new Uint8Array(analyser.fftSize);
-  recDest = ac.createMediaStreamDestination();
-  low.connect(mid); mid.connect(high); high.connect(analyser);
-  analyser.connect(master);
-  master.connect(ac.destination);
-  master.connect(recDest);
-  applyEq();
+  try {
+    if (typeof AudioContext === 'undefined' && typeof webkitAudioContext !== 'undefined') {
+      AudioContext = webkitAudioContext; // eslint-disable-line no-global-assign
+    }
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (err) {
+    console.warn('Web Audio API unavailable:', err);
+    statusEl.textContent = 'AUDIO UNSUPPORTED';
+    ac = null;
+    return;
+  }
+  try {
+    master = ac.createGain();
+    master.gain.value = Number($("master").value);
+    low = ac.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 180;
+    mid = ac.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1000; mid.Q.value = 0.8;
+    high = ac.createBiquadFilter(); high.type = "highshelf"; high.frequency.value = 4200;
+    analyser = ac.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.78;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+    timeData = new Uint8Array(analyser.fftSize);
+    recDest = ac.createMediaStreamDestination();
+    low.connect(mid); mid.connect(high); high.connect(analyser);
+    analyser.connect(master);
+    master.connect(ac.destination);
+    master.connect(recDest);
+    applyEq();
+  } catch (err) {
+    console.warn('Audio graph setup failed:', err);
+  }
 }
 
 function applyEq() {
-  if (!low) return;
+  if (!low || !mid || !high || !master) return;
   low.gain.value = Number($("eqLow").value);
   mid.gain.value = Number($("eqMid").value);
   high.gain.value = Number($("eqHigh").value);
@@ -324,6 +347,7 @@ function parsePrompt() {
 }
 
 function resize() {
+  if (!canvas) return;
   const r = canvas.getBoundingClientRect();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.max(2, Math.floor(r.width * dpr));
@@ -353,18 +377,28 @@ function bindDeck(letter, file) {
     log(`Loaded still on deck ${letter}: ${file.name}`);
     return;
   }
+  if (!el) {
+    log(`Could not bind media element for ${file.name}`);
+    return;
+  }
   el.src = url;
   el.loop = false;
   const mute = $(`mute${letter}`).checked;
   el.muted = mute;
   let node = mediaSources.get(el);
-  if (!node) {
-    node = ac.createMediaElementSource(el);
-    mediaSources.set(el, node);
+  if (!node && ac) {
+    try {
+      node = ac.createMediaElementSource(el);
+      mediaSources.set(el, node);
+    } catch (err) {
+      console.warn('createMediaElementSource failed', err);
+    }
   }
-  const gain = ac.createGain();
-  node.connect(gain);
-  gain.connect(low);
+  const gain = ac ? ac.createGain() : null;
+  if (node && gain) {
+    node.connect(gain);
+    gain.connect(low);
+  }
   decks[letter] = { el, kind: isVid ? "video" : "audio", gain, srcNode: node, fileName: file.name, url };
   $(`meta${letter}`).textContent = `${file.name} · ${isVid ? "video" : "audio"}`;
   log(`Loaded ${file.name} on deck ${letter}${mute ? " (original muted)" : ""}`);
@@ -401,7 +435,7 @@ function fmt(t) {
 
 async function playAll() {
   ensureAudio();
-  if (ac.state === "suspended") await ac.resume();
+  if (ac && ac.state === "suspended") await ac.resume();
   stopDemo();
   const jobs = [];
   ["A", "B"].forEach(L => {
@@ -427,9 +461,13 @@ function stopAll() {
 
 async function startDemo() {
   ensureAudio();
-  if (ac.state === "suspended") await ac.resume();
+  if (ac && ac.state === "suspended") await ac.resume();
   stopDemo();
   state.demo = true;
+  if (!ac) {
+    log('Demo unavailable: audio context not created');
+    return;
+  }
   const o = ac.createOscillator();
   const g = ac.createGain();
   o.type = "sawtooth";
@@ -482,6 +520,7 @@ function energyOf() {
 }
 
 function drawVideoLayer() {
+  if (!ctx) return;
   const vid = decks.A.kind === "video" ? decks.A.el : (decks.B.kind === "video" ? decks.B.el : null);
   const img = decks.A.kind === "image" ? decks.A.el : (decks.B.kind === "image" ? decks.B.el : null);
   const src = (vid && vid.readyState >= 2) ? vid : (img && img.complete ? img : null);
@@ -502,6 +541,7 @@ function palette() {
 }
 
 function drawBars(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   const bars = 72;
   const gap = 4;
@@ -514,6 +554,7 @@ function drawBars(e) {
   }
 }
 function drawRadial(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   const cx = w / 2, cy = h / 2;
   const bins = 96;
@@ -533,6 +574,7 @@ function drawRadial(e) {
   ctx.restore();
 }
 function drawTunnel(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   const cx = w / 2, cy = h / 2;
   for (let i = 12; i > 0; i--) {
@@ -545,6 +587,7 @@ function drawTunnel(e) {
   ctx.globalAlpha = 1;
 }
 function drawParticles(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   if (state.particles.length < 140) {
     state.particles.push({ x: Math.random() * w, y: Math.random() * h, v: 0.4 + Math.random() * 2, r: 1 + Math.random() * 3 });
@@ -562,6 +605,7 @@ function drawParticles(e) {
   ctx.globalAlpha = 1;
 }
 function drawSilk(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   ctx.beginPath();
   for (let x = 0; x <= w; x += 6) {
@@ -575,6 +619,7 @@ function drawSilk(e) {
   ctx.stroke();
 }
 function drawFilm(e) {
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   const words = (state.prompt || "hold still").split(/\s+/).slice(0, 8);
   ctx.fillStyle = palette()[0];
@@ -591,6 +636,7 @@ function drawFilm(e) {
 function frame() {
   state.raf = requestAnimationFrame(frame);
   state.t += 0.016;
+  if (!ctx) return;
   const w = canvas.width, h = canvas.height;
   const e = energyOf();
   const [c1, c2, c3] = palette();
@@ -628,7 +674,7 @@ frame();
 
 function mime() {
   const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
-  return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+  return (typeof MediaRecorder !== 'undefined' && types.find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t))) || "";
 }
 async function startRec() {
   // Keep the session locked until its final chunks and local save finish.
@@ -639,7 +685,7 @@ async function startRec() {
   let stream;
   const release = () => {
     // The mixer audio track is shared by future recordings.
-    stream?.getVideoTracks().forEach(t => t.stop());
+    try { stream?.getVideoTracks().forEach(t => t.stop()); } catch (e) {}
     state.recorder = null;
     state.recording = false;
     $("recBtn").disabled = false;
@@ -650,13 +696,13 @@ async function startRec() {
   const name = `${($("projName").value || "nocturne").replace(/\s+/g, "-")}-take-${state.activeTake + 1}.webm`;
   const projectId = state.projectId;
   try {
-    if (typeof MediaRecorder === "undefined" || !canvas.captureStream) {
+    if (typeof MediaRecorder === "undefined" || !canvas || !canvas.captureStream) {
       throw new Error("Live recording is unavailable in this browser.");
     }
     ensureAudio();
-    if (ac.state === "suspended") await ac.resume();
+    if (ac && ac.state === "suspended") await ac.resume();
     stream = canvas.captureStream(30);
-    recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+    if (recDest && recDest.stream) recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
     const chunks = [];
     const type = mime();
     const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
@@ -871,9 +917,7 @@ idbAll("activity").then(rows => {
     d.innerHTML = `<span>${r.msg}</span><span>${new Date(r.at).toLocaleTimeString()}</span>`;
     $("log").appendChild(d);
   });
-});
+}).catch(()=>{});
 </script>
 </body>
 </html>
-
-
