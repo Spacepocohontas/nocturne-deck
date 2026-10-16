@@ -141,7 +141,7 @@
       <option value="tunnel">Tunnel</option>
       <option value="particles">Particle storm</option>
       <option value="silk">Wave silk</option>
-      <option value="film">Prompt film</option>
+      <option value="film">Prompt film</option><option value="mirror">Mirror bars</option><option value="spiral">Spiral bloom</option>
     </select>
     <label>Prompt, lyrics, or message</label>
     <textarea id="prompt" placeholder="crimson alley, neon rain, a girl who doesn't look back — or paste lyrics, one line per row"></textarea>
@@ -651,9 +651,11 @@ function frame() {
   const mode = $("mode").value;
   state.mode = mode;
   const pick = mode === "auto"
-    ? ["bars", "radial", "tunnel", "particles", "silk", "film"][Math.floor(state.beat / 8) % 6]
+    ? ["bars", "radial", "tunnel", "particles", "silk", "film", "mirror", "spiral"][Math.floor(state.beat / 8) % 8]
     : mode;
-  if (pick === "bars") drawBars(e);
+  if (pick === "mirror") { ctx.save();ctx.translate(0,h/2);ctx.scale(1,.5);drawBars(e);ctx.scale(1,-1);drawBars(e);ctx.restore(); }
+  else if(pick === "spiral") {for(let i=0;i<180;i++){const a=i*.2+state.t*.5,r=i/180*Math.min(w,h)*(.25+e*.2);ctx.beginPath();ctx.arc(w/2+Math.cos(a)*r,h/2+Math.sin(a)*r,1+e*6,0,Math.PI*2);ctx.fillStyle=`hsl(${(state.hue+i*2)%360},90%,65%)`;ctx.fill();}}
+  else if (pick === "bars") drawBars(e);
   else if (pick === "radial") drawRadial(e);
   else if (pick === "tunnel") drawTunnel(e);
   else if (pick === "particles") drawParticles(e);
@@ -919,5 +921,5 @@ idbAll("activity").then(rows => {
   });
 }).catch(()=>{});
 </script>
-</body>
+<script src="performance-controls.js"></script></body>
 </html>
